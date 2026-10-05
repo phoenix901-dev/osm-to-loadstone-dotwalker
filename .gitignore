@@ -1,0 +1,8 @@
+# Output of the converter - never commit generated data
+Out/
+In/
+tmp/
+
+# Python
+__pycache__/
+*.pyc

@@ -1,0 +1,13 @@
+bus_stop;zastávka autobusu
+tram stop;zastávka tramvaje
+kindergarten: ;;školka
+school: ;;škola
+fuel: ;;èerpací stanice
+pub: ;;hospoda
+restaurant: ;;restaurace
+ X ; ; ïåğåñåêàåòñÿ ñ
+suburb;$DEL
+parking;$DEL
+cafe: ;;kavárna
+//rail;$DEL
+rail;eleznice
