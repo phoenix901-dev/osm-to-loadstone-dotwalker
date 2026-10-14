@@ -13,7 +13,7 @@ OSM -> LoadStone + DotWalker (linux-порт конвейера).
 
 На выходе в out/: loadstone.txt (LoadStone), route.xml + route.dat (DotWalker).
 """
-import sys, os, time, hashlib, argparse
+import sys, os, time, hashlib, argparse, re
 
 
 def _script_dir():
@@ -214,9 +214,10 @@ AMENITY_RU = {
 
 GUIDELINE = 'Подсказка: %s'          # перевод 'guideline: %s' из каталога
 
-AMENITY_LIST = ('amenity', 'shop', 'railway', 'tourism', 'historic', 'place',
-                'aeroway', 'man_made', 'sport', 'leisure', 'office',
-                'healthcare', 'craft', 'emergency', 'barrier')
+AMENITY_PRIMARY = ('amenity', 'shop', 'railway', 'tourism', 'historic', 'place',
+                   'aeroway', 'man_made', 'sport', 'leisure')
+AMENITY_SECONDARY = ('office', 'healthcare', 'craft', 'emergency', 'barrier')
+AMENITY_LIST = AMENITY_PRIMARY + AMENITY_SECONDARY
 NAME_LIST = ['name', 'description', 'operator']
 # Улучшенный режим: если нет имени, берём brand (магазин без name, но с брендом
 # станет «магазин: Пятёрочка», а не просто «магазин»). В --faithful не берём,
@@ -228,6 +229,14 @@ NAME_ALL = ('name', 'brand', 'description', 'operator')
 # barrier, размеченные точкой-узлом, остаются.
 WAY_SKIP_AMENITY = ('fence', 'wall', 'hedge', 'retaining_wall', 'city_wall',
                     'ditch', 'kerb', 'guard_rail', 'handrail')
+# Значения, которые приходят из тега barrier (для отсечки неименованных).
+BARRIER_VALUES = ('gate', 'lift_gate', 'bollard', 'cycle_barrier', 'stile',
+                  'turnstile', 'kissing_gate', 'swing_gate', 'toll_booth',
+                  'entrance')
+# Неименованные ворота и шлагбаумы для незрячего — полезные ориентиры, поэтому
+# по умолчанию оставляем. Поставить False — тогда в базу идут только ворота и
+# прочие barrier, у которых есть имя (иначе получается много точек «ворота»).
+KEEP_UNNAMED_BARRIERS = True
 SKIP_NAMES = ('FIXME', '(type road name)')
 NO_PREFIX = ('common', 'pitch', 'park')
 
@@ -369,11 +378,23 @@ def _py2_dict_order(keys):
 
 
 # ---------- конструктор имени (osmconverter.constructName) ----------
-def construct_name(tags, name_keys=NAME_LIST):
+_ODD_SPACE = re.compile(r'[\u00a0\u2007\u2009\u202f\t]+')
+_MULTISPACE = re.compile(r' {2,}')
+
+
+def _clean_spaces(s):
+    """Неразрывные и прочие экзотические пробелы → обычный, двойные — в один."""
+    return _MULTISPACE.sub(' ', _ODD_SPACE.sub(' ', s)).strip()
+
+
+def construct_name(tags, name_keys=NAME_LIST, improved=False):
     """tags: итерируемая (k, v) в порядке появления в XML; теги обходятся
     в порядке dict Python 2.6, как в референтном движке.
     name_keys — какие теги считать именем (по приоритету): в улучшенном режиме
-    добавлен brand, в --faithful — как в Windows."""
+    добавлен brand, в --faithful — как в Windows.
+    improved — чистить неразрывные пробелы и двойные пробелы в имени.
+    Основные amenity-теги имеют приоритет над новыми (healthcare не перебивает
+    amenity=clinic), в --faithful поведение прежнее."""
     tags = list(tags)
     vals = {}
     for k, v in tags:
@@ -381,14 +402,20 @@ def construct_name(tags, name_keys=NAME_LIST):
             vals[k] = v
     name = amenity = highway = building = street = address = None
     names = {}
+    amenity_keys = AMENITY_LIST if improved else AMENITY_PRIMARY
     for k in _py2_dict_order(vals.keys()):
         v = vals[k]
         if k in NAME_ALL:
             names[k] = v
         elif k == 'highway' and v == 'bus_stop':
             amenity = v
-        elif k in AMENITY_LIST:
-            amenity = v
+        elif k in amenity_keys:
+            # Основной тег перебивает новый (и любой предыдущий), новый —
+            # только если основного не было.
+            if improved and k in AMENITY_SECONDARY and amenity is not None:
+                pass
+            else:
+                amenity = v
         elif k == 'tactile_paving' and v == 'yes':
             name = GUIDELINE % name
         elif k == 'highway':
@@ -412,6 +439,8 @@ def construct_name(tags, name_keys=NAME_LIST):
         name = street + address
     if name:
         name = name.replace('"', "'").replace('\n', ' ').replace('\r', ' ')
+        if improved:
+            name = _clean_spaces(name)
         if amenity:
             name = '%s: %s' % (translate_amenity(amenity), name)
     elif amenity and amenity not in NO_PREFIX:
@@ -429,6 +458,7 @@ class Converter(object):
         self.stable_ids = stable_ids
         # Улучшенный режим использует brand как имя; faithful — как Windows.
         self.name_keys = NAME_LIST_BRAND if stable_ids else NAME_LIST
+        self.improved = stable_ids
         self.pois = []          # (name, lat_int, lon_int) в порядке эмиссии
         self.nodes = {}         # osm id -> (lat, lon)
         self.way_centroid = {}  # osm way id -> (lat, lon): центр для relation
@@ -450,6 +480,13 @@ class Converter(object):
         h = int.from_bytes(hashlib.sha1(raw).digest()[:8], 'big')
         return h & 0x7FFFFFFFFFFFFFFF
 
+    def _keep_barrier(self, amenity, tags):
+        """Отсечка неименованных barrier (ворота, шлагбаумы): если
+        KEEP_UNNAMED_BARRIERS выключен, оставляем только те, у кого есть имя."""
+        if KEEP_UNNAMED_BARRIERS or amenity not in BARRIER_VALUES:
+            return True
+        return any(k in NAME_ALL for k, _ in tags)
+
     def run(self, source):
         import xml.etree.ElementTree as ET
         context = ET.iterparse(source, events=('start', 'end'))
@@ -461,17 +498,18 @@ class Converter(object):
             if elem.tag == 'node':
                 lat = float(elem.get('lat'))
                 lon = float(elem.get('lon'))
+                tags = [(c.get('k'), c.get('v')) for c in elem]
                 name, amenity, building, highway = construct_name(
-                    ((c.get('k'), c.get('v')) for c in elem),
-                    name_keys=self.name_keys)
-                if name:
+                    tags, name_keys=self.name_keys, improved=self.improved)
+                if name and self._keep_barrier(amenity, tags):
                     self.add_poi(name, lat, lon)
                 self.nodes[int(elem.get('id'))] = (lat, lon)
             elif elem.tag == 'way':
                 refs = [int(c.get('ref')) for c in elem if c.tag == 'nd']
+                tags = [(c.get('k'), c.get('v')) for c in elem
+                        if c.tag == 'tag']
                 name, amenity, building, highway = construct_name(
-                    ((c.get('k'), c.get('v')) for c in elem if c.tag == 'tag'),
-                    name_keys=self.name_keys)
+                    tags, name_keys=self.name_keys, improved=self.improved)
                 # центр way — понадобится relation-участникам (парки, леса и
                 # здания, размеченные мультиполигонами)
                 if refs:
@@ -489,8 +527,9 @@ class Converter(object):
                 if not name or name in SKIP_NAMES:
                     pass
                 elif (building or amenity):
-                    if amenity in WAY_SKIP_AMENITY and not building:
-                        pass  # линейное ограждение (забор, стена) — не точка
+                    if ((amenity in WAY_SKIP_AMENITY and not building)
+                            or not self._keep_barrier(amenity, tags)):
+                        pass  # линейное ограждение / неименованный barrier
                     else:
                         ref = refs.pop()
                         if len(refs) > 0 and refs[0] == ref:
@@ -510,11 +549,11 @@ class Converter(object):
                         n = self.nodes.get(rid)
                         if n:
                             self.ways_rows.append((name, n[0], n[1]))
-            elif elem.tag == 'relation':
+            elif elem.tag == 'relation' and self.improved:
                 # Мультиполигоны: точка в центр по узлам и центрам way-участников.
                 name, amenity, building, highway = construct_name(
-                    ((c.get('k'), c.get('v')) for c in elem if c.tag == 'tag'),
-                    name_keys=self.name_keys)
+                    [(c.get('k'), c.get('v')) for c in elem if c.tag == 'tag'],
+                    name_keys=self.name_keys, improved=self.improved)
                 if name and name not in SKIP_NAMES:
                     slat = slon = 0.0
                     cnt = 0
