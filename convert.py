@@ -136,7 +136,11 @@ AMENITY_RU = {
     'waste_disposal': 'помойка',
     'water_tower': 'водонапорная башня',
     'zoo': 'зоопарк',
+}
 
+# Русские подписи для новых категорий и уточнения. Применяются ТОЛЬКО в
+# улучшенном режиме, чтобы --faithful оставался 1:1 со старой Windows-сборкой.
+AMENITY_RU_EXTRA = {
     # --- office, healthcare, craft, emergency, barrier (добавлено) ---
     'government': 'госучреждение',
     'company': 'офис',
@@ -182,7 +186,6 @@ AMENITY_RU = {
     'electronics_repair': 'ремонт электроники',
     'gardener': 'садовник',
     'jeweller': 'ювелир',
-    'bakery': 'пекарня',
     'brewery': 'пивоварня',
     'caterer': 'кейтеринг',
     'dressmaker': 'швея',
@@ -241,8 +244,15 @@ SKIP_NAMES = ('FIXME', '(type road name)')
 NO_PREFIX = ('common', 'pitch', 'park')
 
 
-def translate_amenity(a):
+def translate_amenity(a, improved=False):
+    if improved:
+        return AMENITY_RU_EXTRA.get(a, AMENITY_RU.get(a, a))
     return AMENITY_RU.get(a, a)
+
+
+def _has_label(a):
+    """Есть ли русская подпись (в базовом или доп. словаре)."""
+    return a in AMENITY_RU or a in AMENITY_RU_EXTRA
 
 
 def crc16(data):
@@ -321,6 +331,58 @@ def EllipsoidDistance(lat1, lon1, lat2, lon2):
     distance = ((((sy * sy * 4.0 - 3.0) * distance * cz * d / 6.0 - x) * d / 4.0
                  + cz) * sy * d + y) * c * ERAD * r
     return distance
+
+
+# ---------- ближайшая улица (для домов без addr:street) ----------
+STREET_CELL = 0.0015    # размер ячейки сетки (~100-150 м)
+STREET_MAX_DIST = 90.0  # ближайшая улица не дальше 90 м
+
+
+class StreetIndex(object):
+    """Сетка отрезков именованных улиц: даёт название ближайшей улицы к точке.
+    Тот же подход и порог, что в enrich.py для route.dat."""
+
+    def __init__(self):
+        self.grid = {}
+
+    def add(self, name, la1, lo1, la2, lo2):
+        if la1 == la2 and lo1 == lo2:
+            return
+        cai0 = int(floor(min(la1, la2) / STREET_CELL))
+        cai1 = int(floor(max(la1, la2) / STREET_CELL))
+        coi0 = int(floor(min(lo1, lo2) / STREET_CELL))
+        coi1 = int(floor(max(lo1, lo2) / STREET_CELL))
+        for a in range(cai0, cai1 + 1):
+            for o in range(coi0, coi1 + 1):
+                self.grid.setdefault('%d_%d' % (a, o), []).append(
+                    (name, la1, lo1, la2, lo2))
+
+    def nearest(self, lat, lon):
+        cai = int(floor(lat / STREET_CELL))
+        coi = int(floor(lon / STREET_CELL))
+        best = None
+        best_d = STREET_MAX_DIST
+        mlat = cos(lat * pi / 180.0)
+        for da in (-1, 0, 1):
+            for do in (-1, 0, 1):
+                segs = self.grid.get('%d_%d' % (cai + da, coi + do))
+                if not segs:
+                    continue
+                for (nm, la1, lo1, la2, lo2) in segs:
+                    dx, dy = la2 - la1, lo2 - lo1
+                    l2 = dx * dx + dy * dy
+                    if l2 == 0:
+                        continue
+                    t = ((lat - la1) * dx + (lon - lo1) * dy) / l2
+                    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+                    plat, plon = la1 + t * dx, lo1 + t * dy
+                    dlat = (lat - plat) * 111320.0
+                    dlon = (lon - plon) * 111320.0 * mlat
+                    d = sqrt(dlat * dlat + dlon * dlon)
+                    if d < best_d:
+                        best_d = d
+                        best = nm
+        return best
 
 
 # ---------- порядок итерации тегов как в Python 2.6 (Windows) ----------
@@ -402,13 +464,16 @@ def construct_name(tags, name_keys=NAME_LIST, improved=False):
             vals[k] = v
     name = amenity = highway = building = street = address = None
     names = {}
+    need_street = False
     amenity_keys = AMENITY_LIST if improved else AMENITY_PRIMARY
+    amenity_secondary = False
     for k in _py2_dict_order(vals.keys()):
         v = vals[k]
         if k in NAME_ALL:
             names[k] = v
         elif k == 'highway' and v == 'bus_stop':
             amenity = v
+            amenity_secondary = False
         elif k in amenity_keys:
             # Основной тег перебивает новый (и любой предыдущий), новый —
             # только если основного не было.
@@ -416,6 +481,7 @@ def construct_name(tags, name_keys=NAME_LIST, improved=False):
                 pass
             else:
                 amenity = v
+                amenity_secondary = improved and k in AMENITY_SECONDARY
         elif k == 'tactile_paving' and v == 'yes':
             name = GUIDELINE % name
         elif k == 'highway':
@@ -428,11 +494,19 @@ def construct_name(tags, name_keys=NAME_LIST, improved=False):
             address = v
     if amenity == 'yes':
         amenity = None
+    # Новые категории (office/healthcare/craft/emergency/barrier): берём только
+    # значения, для которых есть русская подпись. Иначе в базу попадали бы
+    # сырые английские слова (block, kerb, wire_fence и прочее).
+    if improved and amenity_secondary and not _has_label(amenity):
+        amenity = None
     for s in name_keys:
         if s in names:
             name = names[s]
             break
     if building and (address or street):
+        # Дом с номером, но без улицы — улицу подставим позже по ближайшей.
+        if improved and street is None and address:
+            need_street = True
         street = '' if street is None else street + ' '
         if address is None:
             address = ''
@@ -442,10 +516,10 @@ def construct_name(tags, name_keys=NAME_LIST, improved=False):
         if improved:
             name = _clean_spaces(name)
         if amenity:
-            name = '%s: %s' % (translate_amenity(amenity), name)
+            name = '%s: %s' % (translate_amenity(amenity, improved), name)
     elif amenity and amenity not in NO_PREFIX:
-        name = translate_amenity(amenity)
-    return name, amenity, building, highway
+        name = translate_amenity(amenity, improved)
+    return name, amenity, building, highway, need_street
 
 
 # ---------- движок: обход XML + перекрёстки ----------
@@ -462,6 +536,8 @@ class Converter(object):
         self.pois = []          # (name, lat_int, lon_int) в порядке эмиссии
         self.nodes = {}         # osm id -> (lat, lon)
         self.way_centroid = {}  # osm way id -> (lat, lon): центр для relation
+        self.street = StreetIndex()   # улицы — для домов без addr:street
+        self.pending_street = []      # (индекс poi, номер дома)
         self.ways_rows = []     # (name, lat, lon) именованных шоссейных way
 
     def add_poi(self, name, lat, lon):
@@ -487,6 +563,24 @@ class Converter(object):
             return True
         return any(k in NAME_ALL for k, _ in tags)
 
+    def _emit(self, name, lat, lon, need_street=False):
+        idx = len(self.pois)
+        self.add_poi(name, lat, lon)
+        if need_street:
+            self.pending_street.append((idx, name))
+
+    def _fill_streets(self):
+        """Домам без addr:street подставляем название ближайшей улицы."""
+        filled = 0
+        for idx, addr in self.pending_street:
+            nm, lat, lon = self.pois[idx]
+            st = self.street.nearest(lat / 10000000.0, lon / 10000000.0)
+            if st:
+                self.pois[idx] = ('%s %s' % (st, addr), lat, lon)
+                filled += 1
+        self.street_filled = filled
+        self.pending_street = []
+
     def run(self, source):
         import xml.etree.ElementTree as ET
         context = ET.iterparse(source, events=('start', 'end'))
@@ -499,16 +593,16 @@ class Converter(object):
                 lat = float(elem.get('lat'))
                 lon = float(elem.get('lon'))
                 tags = [(c.get('k'), c.get('v')) for c in elem]
-                name, amenity, building, highway = construct_name(
+                name, amenity, building, highway, need_street = construct_name(
                     tags, name_keys=self.name_keys, improved=self.improved)
                 if name and self._keep_barrier(amenity, tags):
-                    self.add_poi(name, lat, lon)
+                    self._emit(name, lat, lon, need_street)
                 self.nodes[int(elem.get('id'))] = (lat, lon)
             elif elem.tag == 'way':
                 refs = [int(c.get('ref')) for c in elem if c.tag == 'nd']
                 tags = [(c.get('k'), c.get('v')) for c in elem
                         if c.tag == 'tag']
-                name, amenity, building, highway = construct_name(
+                name, amenity, building, highway, need_street = construct_name(
                     tags, name_keys=self.name_keys, improved=self.improved)
                 # центр way — понадобится relation-участникам (парки, леса и
                 # здания, размеченные мультиполигонами)
@@ -543,15 +637,20 @@ class Converter(object):
                         else:
                             n = self.nodes[ref]
                             lat, lon = n[0], n[1]
-                        self.add_poi(name, lat, lon)
+                        self._emit(name, lat, lon, need_street)
                 elif highway:
+                    prev = None
                     for rid in refs:
                         n = self.nodes.get(rid)
                         if n:
                             self.ways_rows.append((name, n[0], n[1]))
+                            if prev is not None:
+                                self.street.add(name, prev[0], prev[1],
+                                                n[0], n[1])
+                            prev = n
             elif elem.tag == 'relation' and self.improved:
                 # Мультиполигоны: точка в центр по узлам и центрам way-участников.
-                name, amenity, building, highway = construct_name(
+                name, amenity, building, highway, _ = construct_name(
                     [(c.get('k'), c.get('v')) for c in elem if c.tag == 'tag'],
                     name_keys=self.name_keys, improved=self.improved)
                 if name and name not in SKIP_NAMES:
@@ -578,6 +677,7 @@ class Converter(object):
             if elem.tag not in ('nd', 'tag', 'member'):
                 root.clear()
         source.close()
+        self._fill_streets()
         self.calculate_intersections()
 
     def calculate_intersections(self):
@@ -730,6 +830,9 @@ def main(argv=None):
     inter = conv.run(open(args.source, 'rb'))
     n_emit = len(conv.pois)
     print('POI эмитировано: %d' % n_emit)
+    if not faithful:
+        print('  домам без улицы подставлена ближайшая улица: %d'
+              % getattr(conv, 'street_filled', 0))
 
     # 1) текст osm.exe-вывода
     data = conv.data_text()
