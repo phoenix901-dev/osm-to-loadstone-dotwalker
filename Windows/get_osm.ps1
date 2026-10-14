@@ -110,7 +110,10 @@ function Get-Tile {
     $w = [double]$parts[2]
     $e = [double]$parts[3]
     # Overpass хочет bbox в порядке south,west,north,east.
-    $query = "[out:xml][timeout:60];(node($(Num $s),$(Num $w),$(Num $n),$(Num $e));way($(Num $s),$(Num $w),$(Num $n),$(Num $e)););(._;>;);out body;"
+    # relations берём тоже (мультиполигоны: крупные парки, леса, здания).
+    # Служебные relation (route/boundary/associatedStreet) исключаем — много
+    # участников вне бокса, раздули бы выкачку.
+    $query = "[out:xml][timeout:60];(node($(Num $s),$(Num $w),$(Num $n),$(Num $e));way($(Num $s),$(Num $w),$(Num $n),$(Num $e));relation($(Num $s),$(Num $w),$(Num $n),$(Num $e))[`"type`"!~`"route|boundary|associatedStreet`"];);(._;>;);out body;"
     $announced = $false
     for ($pass = 0; $pass -lt 3; $pass++) {
         $split = $false

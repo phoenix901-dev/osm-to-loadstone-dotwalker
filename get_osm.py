@@ -121,9 +121,16 @@ def get_tile(tile, out_path):
     s, n, w, e = (float(parts[0]), float(parts[1]),
                   float(parts[2]), float(parts[3]))
     # Overpass хочет bbox в порядке south,west,north,east.
+    # relations берём тоже (мультиполигоны: крупные парки, леса, большие здания —
+    # они размечены relation и без этого терялись). Служебные relation (маршруты,
+    # административные границы, associatedStreet) исключаем: у них много участников
+    # вне бокса, это раздуло бы выкачку.
     query = ("[out:xml][timeout:60];"
-             "(node(%s,%s,%s,%s);way(%s,%s,%s,%s););(._;>;);out body;"
+             "(node(%s,%s,%s,%s);way(%s,%s,%s,%s);"
+             "relation(%s,%s,%s,%s)[\"type\"!~\"route|boundary|associatedStreet\"];);"
+             "(._;>;);out body;"
              % (num(s), num(w), num(n), num(e),
+                num(s), num(w), num(n), num(e),
                 num(s), num(w), num(n), num(e)))
     announced = False
     for pass_no in range(3):

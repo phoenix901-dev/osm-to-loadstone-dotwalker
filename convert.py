@@ -127,13 +127,98 @@ AMENITY_RU = {
     'waste_disposal': 'помойка',
     'water_tower': 'водонапорная башня',
     'zoo': 'зоопарк',
+
+    # --- office, healthcare, craft, emergency, barrier (добавлено) ---
+    'government': 'госучреждение',
+    'company': 'офис',
+    'lawyer': 'юрист',
+    'estate_agent': 'агентство недвижимости',
+    'insurance': 'страховая',
+    'it': 'айти-офис',
+    'ngo': 'общественная организация',
+    'educational_institution': 'учебное заведение',
+    'diplomatic': 'дипмиссия',
+    'research': 'институт',
+    'notary': 'нотариус',
+    'accountant': 'бухгалтерия',
+    'tax_advisor': 'налоговый советник',
+    'architect': 'архитектор',
+    'employment_agency': 'агентство занятости',
+    'telecommunication': 'телеком-офис',
+    'doctor': 'врач',
+    'clinic': 'клиника',
+    'laboratory': 'лаборатория',
+    'physiotherapist': 'физиотерапия',
+    'alternative': 'нетрадиционная медицина',
+    'blood_donation': 'пункт сдачи крови',
+    'birthing_centre': 'роддом',
+    'hospice': 'хоспис',
+    'midwife': 'акушерка',
+    'nurse': 'медсестра',
+    'optometrist': 'окулист',
+    'rehabilitation': 'реабилитация',
+    'psychotherapist': 'психотерапевт',
+    'podiatrist': 'подолог',
+    'vaccination_centre': 'пункт вакцинации',
+    'sample_collection': 'пункт забора анализов',
+    'carpenter': 'столяр',
+    'electrician': 'электрик',
+    'plumber': 'сантехник',
+    'hvac': 'кондиционер',
+    'metal_construction': 'металлоконструкции',
+    'painter': 'маляр',
+    'photographer': 'фотограф',
+    'shoemaker': 'сапожник',
+    'tailor': 'портной',
+    'electronics_repair': 'ремонт электроники',
+    'gardener': 'садовник',
+    'jeweller': 'ювелир',
+    'bakery': 'пекарня',
+    'brewery': 'пивоварня',
+    'caterer': 'кейтеринг',
+    'dressmaker': 'швея',
+    'key_cutter': 'резка ключей',
+    'locksmith': 'замочник',
+    'blacksmith': 'кузнец',
+    'watchmaker': 'часовщик',
+    'stonemason': 'каменщик',
+    'roofer': 'кровельщик',
+    'glaziery': 'стекольщик',
+    'optics': 'оптика',
+    'tiler': 'плиточник',
+    'window_construction': 'окна',
+    'signmaker': 'изготовление вывесок',
+    'ambulance_station': 'станция скорой',
+    'fire_hydrant': 'пожарный гидрант',
+    'fire_extinguisher': 'огнетушитель',
+    'gate': 'ворота',
+    'lift_gate': 'шлагбаум',
+    'bollard': 'столбик',
+    'cycle_barrier': 'велобарьер',
+    'stile': 'перелаз',
+    'turnstile': 'турникет',
+    'kissing_gate': 'калитка',
+    'swing_gate': 'ворота',
+    'toll_booth': 'пункт оплаты',
+    'entrance': 'вход',
 }
 
 GUIDELINE = 'Подсказка: %s'          # перевод 'guideline: %s' из каталога
 
 AMENITY_LIST = ('amenity', 'shop', 'railway', 'tourism', 'historic', 'place',
-                'aeroway', 'man_made', 'sport', 'leisure')
+                'aeroway', 'man_made', 'sport', 'leisure', 'office',
+                'healthcare', 'craft', 'emergency', 'barrier')
 NAME_LIST = ['name', 'description', 'operator']
+# Улучшенный режим: если нет имени, берём brand (магазин без name, но с брендом
+# станет «магазин: Пятёрочка», а не просто «магазин»). В --faithful не берём,
+# чтобы остаться 1:1 с Windows-сборкой.
+NAME_LIST_BRAND = ['name', 'brand', 'description', 'operator']
+NAME_ALL = ('name', 'brand', 'description', 'operator')
+# Линейные ограждения в точки не превращаем: иначе забор или стена на всю
+# длину даёт одну бессмысленную точку по центру. Ворота, шлагбаумы и прочие
+# barrier, размеченные точкой-узлом, остаются.
+WAY_SKIP_AMENITY = ('fence', 'wall', 'hedge', 'retaining_wall', 'city_wall',
+                    'ditch', 'kerb', 'guard_rail', 'handrail')
 SKIP_NAMES = ('FIXME', '(type road name)')
 NO_PREFIX = ('common', 'pitch', 'park')
 
@@ -275,9 +360,11 @@ def _py2_dict_order(keys):
 
 
 # ---------- конструктор имени (osmconverter.constructName) ----------
-def construct_name(tags):
+def construct_name(tags, name_keys=NAME_LIST):
     """tags: итерируемая (k, v) в порядке появления в XML; теги обходятся
-    в порядке dict Python 2.6, как в референтном движке."""
+    в порядке dict Python 2.6, как в референтном движке.
+    name_keys — какие теги считать именем (по приоритету): в улучшенном режиме
+    добавлен brand, в --faithful — как в Windows."""
     tags = list(tags)
     vals = {}
     for k, v in tags:
@@ -287,7 +374,7 @@ def construct_name(tags):
     names = {}
     for k in _py2_dict_order(vals.keys()):
         v = vals[k]
-        if k in NAME_LIST:
+        if k in NAME_ALL:
             names[k] = v
         elif k == 'highway' and v == 'bus_stop':
             amenity = v
@@ -305,7 +392,7 @@ def construct_name(tags):
             address = v
     if amenity == 'yes':
         amenity = None
-    for s in NAME_LIST:
+    for s in name_keys:
         if s in names:
             name = names[s]
             break
@@ -331,8 +418,11 @@ class Converter(object):
         self.base_id = int(base_env) if base_env else int(time.time()) - 315360000
         self.cur_id = self.base_id
         self.stable_ids = stable_ids
+        # Улучшенный режим использует brand как имя; faithful — как Windows.
+        self.name_keys = NAME_LIST_BRAND if stable_ids else NAME_LIST
         self.pois = []          # (name, lat_int, lon_int) в порядке эмиссии
         self.nodes = {}         # osm id -> (lat, lon)
+        self.way_centroid = {}  # osm way id -> (lat, lon): центр для relation
         self.ways_rows = []     # (name, lat, lon) именованных шоссейных way
 
     def add_poi(self, name, lat, lon):
@@ -363,36 +453,81 @@ class Converter(object):
                 lat = float(elem.get('lat'))
                 lon = float(elem.get('lon'))
                 name, amenity, building, highway = construct_name(
-                    (c.get('k'), c.get('v')) for c in elem)
+                    ((c.get('k'), c.get('v')) for c in elem),
+                    name_keys=self.name_keys)
                 if name:
                     self.add_poi(name, lat, lon)
                 self.nodes[int(elem.get('id'))] = (lat, lon)
             elif elem.tag == 'way':
                 refs = [int(c.get('ref')) for c in elem if c.tag == 'nd']
                 name, amenity, building, highway = construct_name(
-                    (c.get('k'), c.get('v')) for c in elem if c.tag == 'tag')
+                    ((c.get('k'), c.get('v')) for c in elem if c.tag == 'tag'),
+                    name_keys=self.name_keys)
+                # центр way — понадобится relation-участникам (парки, леса и
+                # здания, размеченные мультиполигонами)
+                if refs:
+                    clat = clon = 0.0
+                    cn = 0
+                    for rid in refs:
+                        n = self.nodes.get(rid)
+                        if n:
+                            clat += n[0]
+                            clon += n[1]
+                            cn += 1
+                    if cn:
+                        self.way_centroid[int(elem.get('id'))] = (
+                            clat / cn, clon / cn)
                 if not name or name in SKIP_NAMES:
                     pass
                 elif (building or amenity):
-                    ref = refs.pop()
-                    if len(refs) > 0 and refs[0] == ref:
-                        lat = lon = 0.0
-                        for rid in refs:
-                            n = self.nodes[rid]
-                            lat += n[0]
-                            lon += n[1]
-                        lat /= len(refs)
-                        lon /= len(refs)
+                    if amenity in WAY_SKIP_AMENITY and not building:
+                        pass  # линейное ограждение (забор, стена) — не точка
                     else:
-                        n = self.nodes[ref]
-                        lat, lon = n[0], n[1]
-                    self.add_poi(name, lat, lon)
+                        ref = refs.pop()
+                        if len(refs) > 0 and refs[0] == ref:
+                            lat = lon = 0.0
+                            for rid in refs:
+                                n = self.nodes[rid]
+                                lat += n[0]
+                                lon += n[1]
+                            lat /= len(refs)
+                            lon /= len(refs)
+                        else:
+                            n = self.nodes[ref]
+                            lat, lon = n[0], n[1]
+                        self.add_poi(name, lat, lon)
                 elif highway:
                     for rid in refs:
                         n = self.nodes.get(rid)
                         if n:
                             self.ways_rows.append((name, n[0], n[1]))
-            if elem.tag not in ('nd', 'tag'):
+            elif elem.tag == 'relation':
+                # Мультиполигоны: точка в центр по узлам и центрам way-участников.
+                name, amenity, building, highway = construct_name(
+                    ((c.get('k'), c.get('v')) for c in elem if c.tag == 'tag'),
+                    name_keys=self.name_keys)
+                if name and name not in SKIP_NAMES:
+                    slat = slon = 0.0
+                    cnt = 0
+                    for c in elem:
+                        if c.tag != 'member':
+                            continue
+                        mt = c.get('type')
+                        if mt == 'node':
+                            n = self.nodes.get(int(c.get('ref')))
+                            if n:
+                                slat += n[0]
+                                slon += n[1]
+                                cnt += 1
+                        elif mt == 'way':
+                            wc = self.way_centroid.get(int(c.get('ref')))
+                            if wc:
+                                slat += wc[0]
+                                slon += wc[1]
+                                cnt += 1
+                    if cnt:
+                        self.add_poi(name, slat / cnt, slon / cnt)
+            if elem.tag not in ('nd', 'tag', 'member'):
                 root.clear()
         source.close()
         self.calculate_intersections()
