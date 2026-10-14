@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""osm2nav.py — единый запуск для Linux: имя города → карта → готовая база.
+"""osm2nav.py — единый запуск: имя города → карта → готовая база.
 
-Всё по одной команде:
+Linux:
     python3 osm2nav.py "Новороссийск"
-    python3 osm2nav.py "Санкт-Петербург" 5        # +5 км вокруг адм. границы
+    python3 osm2nav.py "Санкт-Петербург" 5          # +5 км вокруг адм. границы
     python3 osm2nav.py minlon minlat maxlon maxlat  # вручную, через ТОЧКУ
+
+Windows: этот же файл собирается в один osm2nav.exe (см. build_windows.sh) и
+запускается через osm2nav.cmd — ввёл город, дальше всё само, результат в консоли.
 
 Делает сам:
   1. геокодинг названия (Nominatim), опциональное расширение бокса на N км;
   2. закачку карты через Overpass (зеркала, дробление, merge) → In/data.osm;
-  3. конвертацию convert.py → Out/loadstone.txt (LoadStone) + route.xml,
-     route.dat, затем типизацию route.dat точками ENRICH v2 (residence/path/
-     intersection/transport + view) — как в Windows-сборке.
+  3. конвертацию → Out/loadstone.txt (LoadStone) + route.xml, route.dat,
+     затем типизацию route.dat точками ENRICH v2 (residence/path/
+     intersection/transport + view).
 
-Выход — те же три файла, что на Windows. Замены выражений берутся из
-ReplaceListWord.txt рядом с этим скриптом (как в Windows-сборке).
+Выход — те же три файла, что и раньше. Замены выражений берутся из
+ReplaceListWord.txt рядом со скриптом/exe.
 """
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-import get_osm  # noqa: E402  (та же папка)
+HERE = (os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, 'frozen', False)
+        else os.path.dirname(os.path.abspath(__file__)))
+if not getattr(sys, 'frozen', False):
+    sys.path.insert(0, HERE)
+
+import get_osm   # noqa: E402  (та же папка)
+import convert   # noqa: E402
+import enrich    # noqa: E402
 
 IN_DIR = os.path.join(HERE, "In")
 OUT_DIR = os.path.join(HERE, "Out")
@@ -56,18 +65,25 @@ def _resolve_box(argv):
 
 
 def main(argv=None):
+    # Русский текст в консоль Windows: обычно cp866 — переключаем на UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     argv = list(sys.argv[1:] if argv is None else argv)
     box, radius = _resolve_box(argv)
     if box is None:
         print("Не смог определить координаты. Можно вручную:")
-        print("python3 osm2nav.py minlon minlat maxlon maxlat")
-        print("пример: python3 osm2nav.py 38.43 55.84 38.47 55.86")
+        print("osm2nav minlon minlat maxlon maxlat")
+        print("пример: osm2nav 38.43 55.84 38.47 55.86")
         return 2
     if radius:
-        print(f"Радиус вокруг города: {radius:g} км.")
+        print("Радиус вокруг города: %g км." % radius)
 
-    print(f"Бокс: lat {box[0]:.4f}..{box[1]:.4f}  lon {box[2]:.4f}..{box[3]:.4f}",
-          flush=True)
+    print("Бокс: lat %.4f..%.4f  lon %.4f..%.4f"
+          % (box[0], box[1], box[2], box[3]), flush=True)
 
     # 1) качаем карту
     os.makedirs(IN_DIR, exist_ok=True)
@@ -79,20 +95,19 @@ def main(argv=None):
         print("Закачка не удалась. Проверь интернет и запусти ещё раз.")
         return 1
     mb = os.path.getsize(osm_path) / (1024 * 1024)
-    print(f"Карта готова: {osm_path} ({mb:.1f} МБ)", flush=True)
+    print("Карта готова: %s (%.1f МБ)" % (osm_path, mb), flush=True)
 
-    # 2) конвертируем
+    # 2) конвертируем (тот же convert.py, но вызовом модуля, а не отдельным
+    #    процессом — так работает и внутри собранного exe)
     print("== Шаг 2 из 3: конвертация ==", flush=True)
     os.makedirs(OUT_DIR, exist_ok=True)
-    convert_py = os.path.join(HERE, "convert.py")
-    rc = os.system(f'"{sys.executable}" "{convert_py}" "{osm_path}" -o "{OUT_DIR}"')
-    if rc != 0:
+    rc = convert.main([osm_path, "-o", OUT_DIR])
+    if rc not in (0, None):
         print("Конвертация завершилась с ошибкой (код %s)." % rc)
         return 1
 
     # 3) типизация route.dat (ENRICH v2 — порт enrich_route_dat.ps1)
     print("== Шаг 3 из 3: типизация route.dat (ENRICH v2) ==", flush=True)
-    import enrich
     enrich.enrich_route(osm_path, os.path.join(OUT_DIR, "route.dat"))
 
     print("")

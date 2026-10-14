@@ -65,6 +65,13 @@ python3 enrich.py                     # типизация route.dat (ENRICH v2)
 
 В папке [`Windows/`](Windows/) — готовая сборка, Python и зависимости не нужны.
 
+Быстрый способ — один файл [`osm2nav.exe`](https://github.com/phoenix901-dev/osm-to-loadstone-dotwalker/releases)
+(рядом `osm2nav.cmd` и `ReplaceListWord.txt`): двойной клик по `osm2nav.cmd`,
+вводишь город — закачка, конвертация и типизация идут в одной консоли, в конце
+готовые файлы в `Out/`. Сборка exe — `build_windows.sh` (PyInstaller).
+
+Прежний способ по шагам:
+
 1. Запусти `get_osm.cmd` — введи название населённого пункта, программа скачает
    свежую карту в `In/`.
 2. Запусти `convert.cmd` — конвертация в `Out/`.

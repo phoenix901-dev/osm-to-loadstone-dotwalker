@@ -3,6 +3,11 @@ Out/
 In/
 tmp/
 
+# Windows build artifacts
+dist/
+build/
+*.spec
+
 # Python
 __pycache__/
 *.pyc

@@ -27,6 +27,14 @@ import urllib.error
 
 UA = "get_osm_cmd/1.0 (OSM-Loadstone-Converter)"
 
+
+def _script_dir():
+    """Папка для In/data.osm: у скрипта — своя, у собранного exe — папка exe."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 # Overpass-зеркала. Первый — основной, остальные запасные.
 MIRRORS = [
     "https://overpass-api.de/api/interpreter",
@@ -36,7 +44,7 @@ MIRRORS = [
     "https://overpass.nchc.org.tw/api/interpreter",
 ]
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = _script_dir()
 IN_DIR = os.path.join(SCRIPT_DIR, "In")
 
 # Скольким русским сообщениям тут соответствует одна строка в get_osm.ps1.

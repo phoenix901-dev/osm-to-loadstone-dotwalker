@@ -15,6 +15,14 @@ import sys
 import math
 import xml.etree.ElementTree as ET
 
+
+def _script_dir():
+    """Папка рядом с данными (In/, Out/): у скрипта — своя, у exe — папка exe."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 CELL_DEG = 0.0015   # размер ячейки сетки (~100-150 м) для быстрого поиска улицы
 MAX_DIST = 90.0     # ближайшая улица в пределах ~90 м
 
@@ -297,7 +305,7 @@ def enrich_route(osm_path, route_path):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    here = os.path.dirname(os.path.abspath(__file__))
+    here = _script_dir()
     osm_path = os.path.join(here, "In", "data.osm")
     route_path = os.path.join(here, "Out", "route.dat")
     if len(argv) >= 1:

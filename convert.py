@@ -15,6 +15,15 @@ OSM -> LoadStone + DotWalker (linux-порт конвейера).
 """
 import sys, os, time, hashlib, argparse
 
+
+def _script_dir():
+    """Папка рядом с данными: у скрипта — своя папка, у собранного exe —
+    папка самого exe (ReplaceListWord.txt, In/, Out/ лежат рядом с ним)."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 # ---- карта аменити: ключ OSM -> русская подпись (из loadstone.mo) ----
 AMENITY_RU = {
 
@@ -650,7 +659,7 @@ def loadstone_records(dot_lines, n_emit, truncate_long=True):
     return rows, dropped
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument('source', nargs='?', default='in/data.osm')
     ap.add_argument('-o', '--out', default='out')
@@ -660,10 +669,10 @@ def main():
     ap.add_argument('--faithful', action='store_true',
                     help='режим Windows 1:1: ронять точки с запятой в имени, '
                          'ронять имена >75 символов, id от времени прогона')
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     faithful = args.faithful
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = _script_dir()
     replace_file = args.replace or os.path.join(script_dir, 'ReplaceListWord.txt')
     replace_pairs = []
     if os.path.exists(replace_file):
@@ -770,7 +779,8 @@ def main():
     print('loadstone записей: %d (убрано p:%d n:%d, невалидных строк: %d)'
           % (len(recs), r1, r2, n_bad))
     print('пропущено при сборке route: %d' % n_skip)
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
